@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz Papers</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+
+    <div class="container">
+        <!-- LOGIN -->
+        <div id="login-screen" class="screen">
+            <h1>Quiz Papers</h1>
+            <p>Selecciona tu nombre:</p>
+            <select id="player-select"><option value="">Cargando...</option></select>
+            <input type="password" id="password-input" placeholder="Contrasena">
+            <button onclick="login()">Entrar</button>
+        </div>
+
+        <!-- MENU PRINCIPAL -->
+        <div id="menu-screen" class="screen hidden">
+            <h2 id="welcome-msg">Hola</h2>
+            <div class="menu-grid">
+                <button class="btn-main" onclick="showScreen('add-paper-screen'); resetPaperForm();">Anadir Paper</button>
+                <button class="btn-main" onclick="setupGame('timeline', 'solo')">Timeline Solo</button>
+                <button class="btn-main" onclick="setupGame('matching', 'solo')">Matching Solo</button>
+                <button class="btn-main" onclick="enterDuelLobby()">Sala de Duelos</button>
+                <button class="btn-main" onclick="showHallOfFame()">Rankings</button>
+                <button class="btn-grey" onclick="showAdmin()">Administracion</button>
+            </div>
+        </div>
+
+        <!-- ANADIR PAPER -->
+        <div id="add-paper-screen" class="screen hidden">
+            <h3 id="form-title">Nuevo Paper</h3>
+            <input type="hidden" id="paper-id">
+            <input type="text" id="paper-title" placeholder="Titulo del paper">
+            <input type="text" id="paper-authors" placeholder="Autores (ej: Smith, Jones & Lee)">
+            <input type="text" id="paper-journal" placeholder="Journal o Conferencia">
+            <input type="number" id="paper-year" placeholder="Ano de publicacion">
+            <div class="actions">
+                <button class="btn-green" onclick="savePaper()">Guardar</button>
+                <button class="btn-red" onclick="showScreen('menu-screen')">Cancelar</button>
+            </div>
+        </div>
+
+        <!-- LOBBY DUELOS -->
+        <div id="duel-lobby-screen" class="screen hidden">
+            <h3>Sala de Duelos</h3>
+
+            <div class="duel-create-section">
+                <p>Crear nueva partida:</p>
+                <div class="create-options">
+                    <select id="duel-type">
+                        <option value="timeline">Timeline</option>
+                        <option value="matching">Matching</option>
+                    </select>
+                    <select id="duel-papers">
+                        <option value="3">3 Papers</option>
+                        <option value="4">4 Papers</option>
+                        <option value="5" selected>5 Papers</option>
+                    </select>
+                    <select id="duel-players">
+                        <option value="2">2 Jugadores</option>
+                        <option value="3">3 Jugadores</option>
+                    </select>
+                    <button class="btn-green" onclick="createDuel()">Crear</button>
+                </div>
+            </div>
+
+            <hr>
+
+            <h4>Partidas esperando jugadores:</h4>
+            <div id="lobbies-list" class="scroll-list">
+                <p>Buscando partidas...</p>
+            </div>
+
+            <button class="btn-red" onclick="showScreen('menu-screen')">Volver al Menu</button>
+        </div>
+
+        <!-- ESPERA DUELO -->
+        <div id="duel-wait-screen" class="screen hidden">
+            <h3>Esperando jugadores...</h3>
+            <p id="wait-info">Tu partida esta visible en el lobby.</p>
+            <div id="players-waiting"></div>
+            <div class="loader"></div>
+            <button class="btn-red" onclick="leaveDuel()">Cancelar</button>
+        </div>
+
+        <!-- TIMELINE GAME -->
+        <div id="timeline-screen" class="screen hidden">
+            <h3 id="timeline-title">Ordena los papers cronologicamente</h3>
+            <p class="hint">Arrastra para ordenar del mas antiguo al mas reciente</p>
+            <div id="timeline-container"></div>
+            <button class="btn-green" onclick="checkTimeline()">Comprobar Orden</button>
+            <button class="btn-red" onclick="abandonGame()">Abandonar</button>
+        </div>
+
+        <!-- MATCHING GAME -->
+        <div id="matching-screen" class="screen hidden">
+            <h3 id="matching-title">Empareja cada paper con sus datos</h3>
+            <p class="hint">Arrastra ano, autores y journal a cada paper</p>
+
+            <div class="matching-layout">
+                <div class="papers-column">
+                    <h4>Papers</h4>
+                    <div id="papers-list"></div>
+                </div>
+
+                <div class="attributes-column">
+                    <h4>Atributos</h4>
+                    <div id="attributes-pool"></div>
+                </div>
+            </div>
+
+            <button class="btn-green" onclick="checkMatching()">Comprobar</button>
+            <button class="btn-red" onclick="abandonGame()">Abandonar</button>
+        </div>
+
+        <!-- RANKINGS -->
+        <div id="hof-screen" class="screen hidden">
+            <h3>Clasificacion</h3>
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('weekly')">Semanal</button>
+                <button class="tab-btn" onclick="switchTab('total')">Historico</button>
+            </div>
+            <div id="hof-list"></div>
+            <button class="btn-red" onclick="showScreen('menu-screen')">Volver</button>
+        </div>
+
+        <!-- ADMIN -->
+        <div id="admin-screen" class="screen hidden">
+            <h3>Administracion</h3>
+            <div class="admin-section">
+                <h4>Gestionar Papers (<span id="papers-count">0</span>)</h4>
+                <div id="admin-papers-list" class="scroll-list"></div>
+            </div>
+            <div class="admin-section">
+                <h4>Gestionar Puntos</h4>
+                <button class="btn-red small" onclick="resetWeekly()">Reiniciar Semanal</button>
+                <button class="btn-red small" onclick="resetTotal()">Reiniciar HISTORICO</button>
+            </div>
+            <button class="btn-main" onclick="showScreen('menu-screen')">Volver</button>
+        </div>
+
+        <!-- RESULTADO DUELO -->
+        <div id="duel-result-screen" class="screen hidden">
+            <h3>Resultado del Duelo</h3>
+            <div id="duel-results"></div>
+            <button class="btn-main" onclick="showScreen('menu-screen')">Volver al Menu</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
