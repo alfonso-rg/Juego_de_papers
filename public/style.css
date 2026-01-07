@@ -134,14 +134,19 @@ button:active {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    touch-action: pan-y;
+    touch-action: none;
     user-select: none;
     -webkit-user-select: none;
+    -webkit-touch-callout: none;
 }
 
 .timeline-card:hover {
     border-color: #3498db;
     background: rgba(52, 152, 219, 0.1);
+}
+
+.timeline-card:active {
+    cursor: grabbing;
 }
 
 .timeline-card .title {
@@ -160,6 +165,11 @@ button:active {
 .sortable-ghost {
     background: rgba(52, 152, 219, 0.3) !important;
     border: 2px dashed #3498db !important;
+}
+
+.sortable-chosen {
+    background: rgba(52, 152, 219, 0.2) !important;
+    box-shadow: 0 4px 20px rgba(52, 152, 219, 0.4);
 }
 
 /* Matching Game */
@@ -207,6 +217,12 @@ button:active {
     font-size: 0.85em;
     color: #7f8c8d;
     transition: all 0.2s;
+    cursor: pointer;
+}
+
+.drop-zone:hover {
+    border-color: rgba(255,255,255,0.4);
+    background: rgba(255,255,255,0.05);
 }
 
 .drop-zone.over {
@@ -221,17 +237,26 @@ button:active {
     background: rgba(39, 174, 96, 0.2);
 }
 
+/* Attribute Chips */
 .attribute-chip {
     background: linear-gradient(135deg, #9b59b6, #8e44ad);
     color: white;
     padding: 8px 12px;
     border-radius: 20px;
     margin: 5px;
-    cursor: grab;
+    cursor: pointer;
     display: inline-block;
     font-size: 0.85em;
     touch-action: none;
     user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    transition: all 0.2s ease;
+}
+
+.attribute-chip:hover {
+    transform: scale(1.05);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
 }
 
 .attribute-chip.year {
@@ -248,6 +273,27 @@ button:active {
 
 .attribute-chip.dragging {
     opacity: 0.5;
+}
+
+/* NUEVO: Estado seleccionado para click-to-select */
+.attribute-chip.selected {
+    transform: scale(1.1);
+    box-shadow: 0 0 0 3px #f1c40f, 0 4px 15px rgba(241, 196, 15, 0.5);
+    animation: pulse-selected 1s ease-in-out infinite;
+}
+
+@keyframes pulse-selected {
+    0%, 100% {
+        box-shadow: 0 0 0 3px #f1c40f, 0 4px 15px rgba(241, 196, 15, 0.5);
+    }
+    50% {
+        box-shadow: 0 0 0 5px #f1c40f, 0 4px 20px rgba(241, 196, 15, 0.7);
+    }
+}
+
+/* NUEVO: Clon para touch drag */
+.touch-dragging {
+    box-shadow: 0 8px 25px rgba(0,0,0,0.4);
 }
 
 #attributes-pool {
@@ -430,10 +476,26 @@ button:active {
     margin-top: 15px;
 }
 
-/* Responsive */
+/* Responsive - MEJORADO PARA MOVIL */
 @media (max-width: 600px) {
+    body {
+        padding: 10px;
+    }
+    
+    .container {
+        padding: 15px;
+    }
+    
+    h1 {
+        font-size: 1.8em;
+    }
+    
     .matching-layout {
         grid-template-columns: 1fr;
+    }
+    
+    .attributes-column {
+        order: -1; /* Poner atributos arriba en movil */
     }
 
     .create-options {
@@ -446,6 +508,32 @@ button:active {
 
     input, select {
         width: 90%;
+    }
+    
+    .attribute-chip {
+        padding: 10px 14px;
+        font-size: 0.9em;
+        margin: 6px;
+    }
+    
+    .drop-zone {
+        padding: 12px;
+        min-height: 40px;
+    }
+    
+    .timeline-card {
+        padding: 12px;
+    }
+    
+    .timeline-card .title {
+        font-size: 0.9em;
+    }
+    
+    .hint {
+        padding: 8px;
+        background: rgba(241, 196, 15, 0.1);
+        border-radius: 8px;
+        border: 1px solid rgba(241, 196, 15, 0.3);
     }
 }
 
@@ -471,4 +559,29 @@ button:active {
 
 #hof-list li:nth-child(3) {
     color: #e67e22;
+}
+
+/* Mejoras de accesibilidad tactil */
+@media (pointer: coarse) {
+    .attribute-chip {
+        padding: 12px 16px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+    }
+    
+    .drop-zone {
+        min-height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    button {
+        min-height: 44px;
+    }
+    
+    .timeline-card {
+        min-height: 60px;
+    }
 }
