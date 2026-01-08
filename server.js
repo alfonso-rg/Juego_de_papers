@@ -609,7 +609,8 @@ app.get('/init-players', async (req, res) => {
             if (!existing) {
                 await Player.create({
                     name: nombre,
-                    password: hashedPassword
+                    password: hashedPassword,
+                    mustChangePassword: true
                 });
                 results.push(`${nombre}: creado con contraseña por defecto`);
             } else {
@@ -624,6 +625,44 @@ app.get('/init-players', async (req, res) => {
         });
     } catch (e) {
         res.status(500).json({ error: 'Error al inicializar jugadores' });
+    }
+});
+
+// ENDPOINT TEMPORAL: Actualizar usuarios existentes con nuevo esquema
+app.get('/update-players', async (req, res) => {
+    try {
+        const defaultPassword = process.env.DEFAULT_PASSWORD || 'cambiar123';
+        const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+
+        const nombres = ["Berti", "Ismael", "Alfonso"];
+        const results = [];
+
+        for (const nombre of nombres) {
+            const player = await Player.findOne({ name: nombre });
+            if (player) {
+                // Actualizar con contraseña hasheada y flag mustChangePassword
+                await Player.findOneAndUpdate(
+                    { name: nombre },
+                    {
+                        password: hashedPassword,
+                        mustChangePassword: true
+                    }
+                );
+                results.push(`${nombre}: actualizado con nueva contraseña y flag`);
+            } else {
+                results.push(`${nombre}: no existe`);
+            }
+        }
+
+        res.json({
+            message: "Actualización completa",
+            results,
+            warning: "Todos los usuarios deben usar la contraseña por defecto y cambiarla",
+            password: defaultPassword
+        });
+    } catch (e) {
+        console.error('Error updating players:', e);
+        res.status(500).json({ error: 'Error al actualizar jugadores', details: e.message });
     }
 });
 
