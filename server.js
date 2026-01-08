@@ -4,14 +4,67 @@ const http = require('http');
 const mongoose = require('mongoose');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const { body, param, validationResult } = require('express-validator');
+const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 
 // --- CONFIGURACION ---
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
 
-app.use(cors());
-app.use(express.json());
+// JWT Secret (debe estar en .env en producción)
+const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-in-production';
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3001'];
+
+// CORS restringido
+const io = new Server(server, {
+    cors: {
+        origin: (origin, callback) => {
+            if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'));
+            }
+        },
+        credentials: true
+    }
+});
+
+// Helmet para headers de seguridad
+app.use(helmet({
+    contentSecurityPolicy: false // Desactivado para permitir SweetAlert2 y Socket.io
+}));
+
+// CORS con whitelist
+app.use(cors({
+    origin: (origin, callback) => {
+        if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true
+}));
+
+// Rate limiting general
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutos
+    max: 100, // límite de 100 requests por IP
+    message: 'Demasiadas peticiones desde esta IP, intenta de nuevo más tarde'
+});
+
+// Rate limiting estricto para operaciones sensibles
+const strictLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: 'Demasiadas peticiones, intenta de nuevo más tarde'
+});
+
+app.use(limiter);
+app.use(express.json({ limit: '10kb' })); // Limitar tamaño de payload
 app.use(express.static('public'));
 
 mongoose.connect(process.env.MONGO_URI)
@@ -21,6 +74,7 @@ mongoose.connect(process.env.MONGO_URI)
 // --- MODELOS ---
 const PlayerSchema = new mongoose.Schema({
     name: { type: String, required: true, unique: true },
+    password: { type: String, required: true }, // Contraseña hasheada
     stats: {
         totalPoints: { type: Number, default: 0 },
         weeklyPoints: { type: Number, default: 0 },
@@ -31,20 +85,72 @@ const PlayerSchema = new mongoose.Schema({
 const Player = mongoose.model('Player', PlayerSchema);
 
 const PaperSchema = new mongoose.Schema({
-    title: { type: String, required: true },
-    authors: { type: String, required: true },
-    journal: { type: String, required: true },
-    year: { type: Number, required: true },
+    title: { type: String, required: true, maxlength: 500 },
+    authors: { type: String, required: true, maxlength: 300 },
+    journal: { type: String, required: true, maxlength: 300 },
+    year: { type: Number, required: true, min: 1800, max: 2100 },
     addedBy: { type: String }
 });
 const Paper = mongoose.model('Paper', PaperSchema);
+
+// --- MIDDLEWARES DE SEGURIDAD ---
+
+// Middleware para verificar JWT
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        return res.status(401).json({ error: 'Token de autenticación requerido' });
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) {
+            return res.status(403).json({ error: 'Token inválido o expirado' });
+        }
+        req.user = user;
+        next();
+    });
+};
+
+// Middleware para validar errores
+const validate = (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+};
+
+// Función para sanitizar strings (prevenir NoSQL injection)
+const sanitizeString = (str) => {
+    if (typeof str !== 'string') return '';
+    return str.replace(/[<>]/g, '').trim().substring(0, 500);
+};
 
 // --- VARIABLES DE JUEGO MULTIJUGADOR ---
 let activeGames = {};
 
 // --- SOCKET.IO (LOGICA DE DUELOS 2-3 JUGADORES) ---
+
+// Middleware de autenticación para Socket.io
+io.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    if (!token) {
+        return next(new Error('Authentication error'));
+    }
+
+    jwt.verify(token, JWT_SECRET, (err, decoded) => {
+        if (err) {
+            return next(new Error('Authentication error'));
+        }
+        socket.user = decoded;
+        next();
+    });
+});
+
 io.on('connection', (socket) => {
-    console.log('Nuevo jugador conectado:', socket.id);
+    console.log('Nuevo jugador conectado:', socket.id, 'Usuario:', socket.user.name);
 
     // Al entrar al lobby, enviamos lista de partidas
     socket.on('enter_lobby', () => {
@@ -53,16 +159,35 @@ io.on('connection', (socket) => {
 
     // Crear una partida nueva
     socket.on('create_game', ({ playerName, gameType, paperCount, maxPlayers }) => {
-        const gameId = 'game_' + Math.random().toString(36).substr(2, 9);
+        // Validación de inputs
+        if (playerName !== socket.user.name) {
+            return socket.emit('error', 'No puedes crear una partida con otro nombre');
+        }
+
+        if (!['timeline', 'matching'].includes(gameType)) {
+            return socket.emit('error', 'Tipo de juego inválido');
+        }
+
+        const validPaperCounts = [3, 4, 5];
+        const validMaxPlayers = [2, 3];
+
+        if (!validPaperCounts.includes(paperCount) || !validMaxPlayers.includes(maxPlayers)) {
+            return socket.emit('error', 'Parámetros inválidos');
+        }
+
+        // Usar crypto para generar ID seguro
+        const crypto = require('crypto');
+        const gameId = 'game_' + crypto.randomBytes(8).toString('hex');
+
         activeGames[gameId] = {
             id: gameId,
-            host: playerName,
-            gameType: gameType, // 'timeline' o 'matching'
+            host: sanitizeString(playerName),
+            gameType: gameType,
             paperCount: paperCount,
-            maxPlayers: maxPlayers, // 2 o 3
-            players: [{ id: socket.id, name: playerName }],
+            maxPlayers: maxPlayers,
+            players: [{ id: socket.id, name: sanitizeString(playerName) }],
             state: 'waiting',
-            finishOrder: [] // Para guardar el orden de llegada
+            finishOrder: []
         };
 
         socket.join(gameId);
@@ -72,9 +197,14 @@ io.on('connection', (socket) => {
 
     // Unirse a una partida existente
     socket.on('join_game', async ({ gameId, playerName }) => {
+        // Validación
+        if (playerName !== socket.user.name) {
+            return socket.emit('error', 'No puedes unirte con otro nombre');
+        }
+
         const game = activeGames[gameId];
         if (game && game.state === 'waiting' && game.players.length < game.maxPlayers) {
-            game.players.push({ id: socket.id, name: playerName });
+            game.players.push({ id: socket.id, name: sanitizeString(playerName) });
             socket.join(gameId);
 
             // Si se llena, empezar partida
@@ -117,11 +247,17 @@ io.on('connection', (socket) => {
 
     // Alguien termino (puede no ser el primero)
     socket.on('duel_finish', async ({ gameId, playerName, correct }) => {
+        // Validación
+        if (playerName !== socket.user.name) {
+            return socket.emit('error', 'No puedes terminar con otro nombre');
+        }
+
         const game = activeGames['playing_' + gameId];
         if (!game || !correct) return;
 
         // Evitar duplicados
-        if (game.finishOrder.includes(playerName)) return;
+        const sanitizedName = sanitizeString(playerName);
+        if (game.finishOrder.includes(sanitizedName)) return;
 
         game.finishOrder.push(playerName);
         const position = game.finishOrder.length;
@@ -198,48 +334,119 @@ async function getGamePapers(count) {
 
 // --- RUTAS API ---
 
-// Jugadores
+// Login con JWT
+app.post('/api/login',
+    strictLimiter,
+    body('name').trim().isLength({ min: 1, max: 50 }).escape(),
+    body('password').isLength({ min: 1 }),
+    validate,
+    async (req, res) => {
+        try {
+            const { name, password } = req.body;
+
+            const player = await Player.findOne({ name });
+            if (!player) {
+                return res.status(401).json({ error: 'Credenciales inválidas' });
+            }
+
+            const validPassword = await bcrypt.compare(password, player.password);
+            if (!validPassword) {
+                return res.status(401).json({ error: 'Credenciales inválidas' });
+            }
+
+            const token = jwt.sign(
+                { name: player.name, id: player._id },
+                JWT_SECRET,
+                { expiresIn: '24h' }
+            );
+
+            res.json({
+                success: true,
+                token,
+                player: {
+                    name: player.name,
+                    stats: player.stats
+                }
+            });
+        } catch (e) {
+            res.status(500).json({ error: 'Error en el servidor' });
+        }
+    }
+);
+
+// Jugadores (sin contraseñas)
 app.get('/api/players', async (req, res) => {
     try {
-        const players = await Player.find().sort('name');
+        const players = await Player.find().select('-password').sort('name');
         res.json(players);
     } catch(e) {
         res.status(500).json({error: e.message});
     }
 });
 
-// Papers CRUD
-app.post('/api/paper', async (req, res) => {
-    try {
-        const { title, authors, journal, year, addedBy } = req.body;
-        const newPaper = new Paper({ title, authors, journal, year: parseInt(year), addedBy });
-        await newPaper.save();
-        res.json({ success: true });
-    } catch(e) {
-        res.status(500).json({ error: e.message });
+// Papers CRUD - Protegidos con autenticación
+app.post('/api/paper',
+    authenticateToken,
+    body('title').trim().isLength({ min: 1, max: 500 }).escape(),
+    body('authors').trim().isLength({ min: 1, max: 300 }).escape(),
+    body('journal').trim().isLength({ min: 1, max: 300 }).escape(),
+    body('year').isInt({ min: 1800, max: 2100 }),
+    validate,
+    async (req, res) => {
+        try {
+            const { title, authors, journal, year } = req.body;
+            const newPaper = new Paper({
+                title: sanitizeString(title),
+                authors: sanitizeString(authors),
+                journal: sanitizeString(journal),
+                year: parseInt(year),
+                addedBy: req.user.name
+            });
+            await newPaper.save();
+            res.json({ success: true });
+        } catch(e) {
+            res.status(500).json({ error: 'Error al guardar el paper' });
+        }
     }
-});
+);
 
-app.put('/api/paper/:id', async (req, res) => {
-    try {
-        const { title, authors, journal, year } = req.body;
-        await Paper.findByIdAndUpdate(req.params.id, {
-            title, authors, journal, year: parseInt(year)
-        });
-        res.json({ success: true });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
+app.put('/api/paper/:id',
+    authenticateToken,
+    param('id').isMongoId(),
+    body('title').trim().isLength({ min: 1, max: 500 }).escape(),
+    body('authors').trim().isLength({ min: 1, max: 300 }).escape(),
+    body('journal').trim().isLength({ min: 1, max: 300 }).escape(),
+    body('year').isInt({ min: 1800, max: 2100 }),
+    validate,
+    async (req, res) => {
+        try {
+            const { title, authors, journal, year } = req.body;
+            await Paper.findByIdAndUpdate(req.params.id, {
+                title: sanitizeString(title),
+                authors: sanitizeString(authors),
+                journal: sanitizeString(journal),
+                year: parseInt(year)
+            });
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: 'Error al actualizar el paper' });
+        }
     }
-});
+);
 
-app.delete('/api/paper/:id', async (req, res) => {
-    try {
-        await Paper.findByIdAndDelete(req.params.id);
-        res.json({ success: true });
-    } catch(e) {
-        res.status(500).json({ error: e.message });
+app.delete('/api/paper/:id',
+    authenticateToken,
+    param('id').isMongoId(),
+    validate,
+    async (req, res) => {
+        try {
+            await Paper.findByIdAndDelete(req.params.id);
+            res.json({ success: true });
+        } catch(e) {
+            res.status(500).json({ error: 'Error al eliminar el paper' });
+        }
     }
-});
+);
 
 app.get('/api/papers/all', async (req, res) => {
     try {
@@ -250,38 +457,52 @@ app.get('/api/papers/all', async (req, res) => {
     }
 });
 
-// Obtener papers para juego
-app.get('/api/game', async (req, res) => {
-    try {
-        const count = parseInt(req.query.count) || 5;
-        const papers = await getGamePapers(count);
-        res.json(papers);
-    } catch (e) {
-        res.status(400).json({ error: "No hay suficientes papers" });
-    }
-});
-
-// Guardar puntuacion (modo solo)
-app.post('/api/score', async (req, res) => {
-    try {
-        const { playerName, points, gameType } = req.body;
-        const gameTypeKey = gameType === 'timeline' ? 'timelineWins' : 'matchingWins';
-
-        await Player.findOneAndUpdate(
-            { name: playerName },
-            {
-                $inc: {
-                    "stats.totalPoints": points,
-                    "stats.weeklyPoints": points,
-                    [`stats.${gameTypeKey}.solo`]: points > 0 ? 1 : 0
-                }
+// Obtener papers para juego - Requiere autenticación
+app.get('/api/game',
+    authenticateToken,
+    async (req, res) => {
+        try {
+            const count = parseInt(req.query.count) || 5;
+            if (count < 2 || count > 5) {
+                return res.status(400).json({ error: "Count debe ser entre 2 y 5" });
             }
-        );
-        res.json({ success: true });
-    } catch(e) {
-        res.status(500).json({ error: e.message });
+            const papers = await getGamePapers(count);
+            res.json(papers);
+        } catch (e) {
+            res.status(400).json({ error: "No hay suficientes papers" });
+        }
     }
-});
+);
+
+// Guardar puntuacion (modo solo) - Requiere autenticación
+app.post('/api/score',
+    authenticateToken,
+    body('points').isInt({ min: -10, max: 10 }),
+    body('gameType').isIn(['timeline', 'matching']),
+    validate,
+    async (req, res) => {
+        try {
+            const { points, gameType } = req.body;
+            const playerName = req.user.name; // Usar el nombre del token
+
+            const gameTypeKey = gameType === 'timeline' ? 'timelineWins' : 'matchingWins';
+
+            await Player.findOneAndUpdate(
+                { name: playerName },
+                {
+                    $inc: {
+                        "stats.totalPoints": points,
+                        "stats.weeklyPoints": points,
+                        [`stats.${gameTypeKey}.solo`]: points > 0 ? 1 : 0
+                    }
+                }
+            );
+            res.json({ success: true });
+        } catch(e) {
+            res.status(500).json({ error: 'Error al guardar puntuación' });
+        }
+    }
+);
 
 // Rankings
 app.get('/api/hof', async (req, res) => {
@@ -294,36 +515,66 @@ app.get('/api/hof', async (req, res) => {
     }
 });
 
-// Admin
-app.post('/api/admin/reset-weekly', async (req, res) => {
-    try {
-        await Player.updateMany({}, { $set: { "stats.weeklyPoints": 0 } });
-        res.json({ success: true });
-    } catch(e) {
-        res.status(500).json({ error: e.message });
+// Admin - Protegido con autenticación y rate limit estricto
+app.post('/api/admin/reset-weekly',
+    authenticateToken,
+    strictLimiter,
+    async (req, res) => {
+        try {
+            await Player.updateMany({}, { $set: { "stats.weeklyPoints": 0 } });
+            console.log(`Admin action: Weekly reset by ${req.user.name}`);
+            res.json({ success: true });
+        } catch(e) {
+            res.status(500).json({ error: 'Error al reiniciar puntos semanales' });
+        }
     }
-});
+);
 
-app.post('/api/admin/reset-total', async (req, res) => {
-    try {
-        await Player.updateMany({}, { $set: { "stats.totalPoints": 0 } });
-        res.json({ success: true });
-    } catch(e) {
-        res.status(500).json({ error: e.message });
+app.post('/api/admin/reset-total',
+    authenticateToken,
+    strictLimiter,
+    async (req, res) => {
+        try {
+            await Player.updateMany({}, { $set: { "stats.totalPoints": 0 } });
+            console.log(`Admin action: Total reset by ${req.user.name}`);
+            res.json({ success: true });
+        } catch(e) {
+            res.status(500).json({ error: 'Error al reiniciar puntos totales' });
+        }
     }
-});
+);
 
-// Inicializar jugadores
+// Inicializar jugadores con contraseña por defecto
+// IMPORTANTE: Cambiar contraseñas después de la primera ejecución
 app.get('/init-players', async (req, res) => {
-    const nombres = ["Berti", "Ismael", "Alfonso"];
-    for (const nombre of nombres) {
-        await Player.findOneAndUpdate(
-            { name: nombre },
-            { name: nombre },
-            { upsert: true }
-        );
+    try {
+        const defaultPassword = process.env.DEFAULT_PASSWORD || 'cambiar123';
+        const hashedPassword = await bcrypt.hash(defaultPassword, 10);
+
+        const nombres = ["Berti", "Ismael", "Alfonso"];
+        const results = [];
+
+        for (const nombre of nombres) {
+            const existing = await Player.findOne({ name: nombre });
+            if (!existing) {
+                await Player.create({
+                    name: nombre,
+                    password: hashedPassword
+                });
+                results.push(`${nombre}: creado con contraseña por defecto`);
+            } else {
+                results.push(`${nombre}: ya existe`);
+            }
+        }
+
+        res.json({
+            message: "Inicialización completa",
+            results,
+            warning: "CAMBIAR CONTRASEÑAS INMEDIATAMENTE"
+        });
+    } catch (e) {
+        res.status(500).json({ error: 'Error al inicializar jugadores' });
     }
-    res.send("Jugadores creados/verificados: Berti, Ismael, Alfonso");
 });
 
 const PORT = process.env.PORT || 3001;

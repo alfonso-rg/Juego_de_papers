@@ -1,9 +1,6 @@
-const socket = io();
-
-// --- CONFIGURACION ---
-const GAME_PASSWORD = 'bertismael';
-
 // VARIABLES GLOBALES
+let socket = null;
+let authToken = null;
 let currentPlayer = null;
 let currentPapers = [];
 let currentHofData = null;
@@ -38,111 +35,183 @@ async function loadPlayers() {
         });
     } catch (e) {
         console.error(e);
+        Swal.fire('Error', 'No se pudieron cargar los jugadores', 'error');
     }
 }
 
-function login() {
+async function login() {
     const name = document.getElementById('player-select').value;
-    const pass = document.getElementById('password-input').value;
+    const password = document.getElementById('password-input').value;
 
     if (!name) {
         Swal.fire('Error', 'Debes seleccionar un nombre', 'warning');
         return;
     }
 
-    if (pass !== GAME_PASSWORD) {
-        Swal.fire('Error', 'Contrasena incorrecta', 'error');
+    if (!password) {
+        Swal.fire('Error', 'Debes introducir la contraseña', 'warning');
         return;
     }
 
-    currentPlayer = name;
-    document.getElementById('welcome-msg').textContent = `Hola, ${currentPlayer}`;
-    showScreen('menu-screen');
+    Swal.fire({ title: 'Autenticando...', didOpen: () => Swal.showLoading() });
+
+    try {
+        const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, password })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
+            Swal.fire('Error', data.error || 'Credenciales incorrectas', 'error');
+            return;
+        }
+
+        // Guardar token
+        authToken = data.token;
+        currentPlayer = data.player.name;
+
+        // Conectar socket con autenticación
+        initSocket();
+
+        document.getElementById('welcome-msg').textContent = `Hola, ${currentPlayer}`;
+        Swal.close();
+        showScreen('menu-screen');
+
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', 'Error de conexión con el servidor', 'error');
+    }
+}
+
+// Inicializar Socket.io con autenticación
+function initSocket() {
+    if (socket) {
+        socket.disconnect();
+    }
+
+    socket = io({
+        auth: {
+            token: authToken
+        }
+    });
+
+    setupSocketListeners();
+}
+
+// Configurar listeners de Socket.io
+function setupSocketListeners() {
+    socket.on('connect_error', (err) => {
+        console.error('Socket connection error:', err.message);
+        Swal.fire('Error', 'Error de autenticación. Por favor, vuelve a iniciar sesión.', 'error');
+        showScreen('login-screen');
+    });
+
+    socket.on('lobby_update', (games) => {
+        if (document.getElementById('duel-lobby-screen').classList.contains('hidden')) return;
+
+        const list = document.getElementById('lobbies-list');
+        list.innerHTML = '';
+
+        const availableGames = Object.values(games).filter(g => g.state === 'waiting');
+
+        if (availableGames.length === 0) {
+            list.innerHTML = '<p style="color:#7f8c8d; font-style:italic;">No hay partidas creadas. Crea una!</p>';
+            return;
+        }
+
+        availableGames.forEach(game => {
+            const div = document.createElement('div');
+            div.className = 'lobby-item';
+
+            const typeLabel = game.gameType === 'timeline' ? 'Timeline' : 'Matching';
+            const playersNeeded = game.maxPlayers - game.players.length;
+
+            let actionBtn = '';
+            if (!game.players.find(p => p.name === currentPlayer)) {
+                actionBtn = `<button class="btn-green small" onclick="joinDuel('${game.id}')">Unirse</button>`;
+            } else {
+                actionBtn = `<span style="color:#f1c40f; font-size:0.8em;">(Tu partida)</span>`;
+            }
+
+            div.innerHTML = `
+                <div class="info">
+                    <div class="host">${game.host}</div>
+                    <div class="details">${typeLabel} | ${game.paperCount} papers | Faltan ${playersNeeded}</div>
+                </div>
+                ${actionBtn}
+            `;
+            list.appendChild(div);
+        });
+    });
+
+    socket.on('game_created', ({ gameId }) => {
+        currentDuelId = gameId;
+        showScreen('duel-wait-screen');
+    });
+
+    socket.on('player_joined', ({ players, needed }) => {
+        const waitDiv = document.getElementById('players-waiting');
+        waitDiv.innerHTML = `<p>Jugadores: ${players.join(', ')}</p><p>Faltan: ${needed}</p>`;
+    });
+
+    socket.on('game_start', ({ papers, gameType, players }) => {
+        isDuel = true;
+        currentPapers = papers;
+        currentGameType = gameType;
+        attempts = 0;
+
+        const opponents = players.filter(p => p !== currentPlayer).join(', ');
+        const title = `Duelo vs ${opponents}`;
+
+        if (gameType === 'timeline') {
+            renderTimeline(title);
+        } else {
+            renderMatching(title);
+        }
+    });
+
+    socket.on('duel_position', ({ playerName, position, points, finishOrder }) => {
+        if (playerName === currentPlayer) {
+            const medals = ['', '1ro', '2do', '3ro'];
+            Swal.fire({
+                title: `${medals[position]}! +${points} puntos`,
+                icon: position === 1 ? 'success' : 'info',
+                timer: 2000,
+                showConfirmButton: false
+            });
+        }
+    });
+
+    socket.on('duel_complete', ({ finishOrder, winner }) => {
+        showDuelResults(finishOrder);
+    });
+
+    socket.on('error', (message) => {
+        Swal.fire('Error', message, 'error');
+    });
 }
 
 // ---------------------------------------------------------
 // 2. LOGICA DEL MULTIJUGADOR (SOCKETS)
 // ---------------------------------------------------------
 
-socket.on('lobby_update', (games) => {
-    if (document.getElementById('duel-lobby-screen').classList.contains('hidden')) return;
-
-    const list = document.getElementById('lobbies-list');
-    list.innerHTML = '';
-
-    const availableGames = Object.values(games).filter(g => g.state === 'waiting');
-
-    if (availableGames.length === 0) {
-        list.innerHTML = '<p style="color:#7f8c8d; font-style:italic;">No hay partidas creadas. Crea una!</p>';
-        return;
+// Helper para hacer fetch con autenticación
+async function authenticatedFetch(url, options = {}) {
+    if (!authToken) {
+        throw new Error('No autenticado');
     }
 
-    availableGames.forEach(game => {
-        const div = document.createElement('div');
-        div.className = 'lobby-item';
+    const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`,
+        ...options.headers
+    };
 
-        const typeLabel = game.gameType === 'timeline' ? 'Timeline' : 'Matching';
-        const playersNeeded = game.maxPlayers - game.players.length;
-
-        let actionBtn = '';
-        if (!game.players.find(p => p.name === currentPlayer)) {
-            actionBtn = `<button class="btn-green small" onclick="joinDuel('${game.id}')">Unirse</button>`;
-        } else {
-            actionBtn = `<span style="color:#f1c40f; font-size:0.8em;">(Tu partida)</span>`;
-        }
-
-        div.innerHTML = `
-            <div class="info">
-                <div class="host">${game.host}</div>
-                <div class="details">${typeLabel} | ${game.paperCount} papers | Faltan ${playersNeeded}</div>
-            </div>
-            ${actionBtn}
-        `;
-        list.appendChild(div);
-    });
-});
-
-socket.on('game_created', ({ gameId }) => {
-    currentDuelId = gameId;
-    showScreen('duel-wait-screen');
-});
-
-socket.on('player_joined', ({ players, needed }) => {
-    const waitDiv = document.getElementById('players-waiting');
-    waitDiv.innerHTML = `<p>Jugadores: ${players.join(', ')}</p><p>Faltan: ${needed}</p>`;
-});
-
-socket.on('game_start', ({ papers, gameType, players }) => {
-    isDuel = true;
-    currentPapers = papers;
-    currentGameType = gameType;
-    attempts = 0;
-
-    const opponents = players.filter(p => p !== currentPlayer).join(', ');
-    const title = `Duelo vs ${opponents}`;
-
-    if (gameType === 'timeline') {
-        renderTimeline(title);
-    } else {
-        renderMatching(title);
-    }
-});
-
-socket.on('duel_position', ({ playerName, position, points, finishOrder }) => {
-    if (playerName === currentPlayer) {
-        const medals = ['', '1ro', '2do', '3ro'];
-        Swal.fire({
-            title: `${medals[position]}! +${points} puntos`,
-            icon: position === 1 ? 'success' : 'info',
-            timer: 2000,
-            showConfirmButton: false
-        });
-    }
-});
-
-socket.on('duel_complete', ({ finishOrder, winner }) => {
-    showDuelResults(finishOrder);
-});
+    return fetch(url, { ...options, headers });
+}
 
 function enterDuelLobby() {
     showScreen('duel-lobby-screen');
@@ -228,7 +297,7 @@ async function startSoloGame(gameType, count) {
     attempts = 0;
 
     try {
-        const res = await fetch(`/api/game?count=${count}`);
+        const res = await authenticatedFetch(`/api/game?count=${count}`);
         if (!res.ok) throw new Error('Error');
         currentPapers = await res.json();
 
@@ -786,11 +855,14 @@ function abandonGame() {
 // ---------------------------------------------------------
 
 async function saveScore(points, gameType) {
-    await fetch('/api/score', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerName: currentPlayer, points, gameType })
-    });
+    try {
+        await authenticatedFetch('/api/score', {
+            method: 'POST',
+            body: JSON.stringify({ points, gameType })
+        });
+    } catch (e) {
+        console.error('Error al guardar puntuación:', e);
+    }
 }
 
 // ---------------------------------------------------------
@@ -823,16 +895,17 @@ async function savePaper() {
     Swal.fire({ title: 'Guardando...', didOpen: () => Swal.showLoading() });
 
     try {
-        const res = await fetch(url, {
+        const res = await authenticatedFetch(url, {
             method: method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, authors, journal, year, addedBy: currentPlayer })
+            body: JSON.stringify({ title, authors, journal, year })
         });
         const data = await res.json();
-        if (data.success) {
+        if (data.success || res.ok) {
             Swal.fire('Guardado!', '', 'success');
             if (id) showAdmin();
             else showScreen('menu-screen');
+        } else {
+            throw new Error('Error al guardar');
         }
     } catch (e) {
         Swal.fire('Error', 'No se pudo guardar', 'error');
@@ -868,26 +941,30 @@ function switchTab(type) {
 
 async function showAdmin() {
     showScreen('admin-screen');
-    const res = await fetch('/api/papers/all');
-    const papers = await res.json();
+    try {
+        const res = await fetch('/api/papers/all');
+        const papers = await res.json();
 
-    document.getElementById('papers-count').textContent = papers.length;
+        document.getElementById('papers-count').textContent = papers.length;
 
-    const list = document.getElementById('admin-papers-list');
-    list.innerHTML = '';
+        const list = document.getElementById('admin-papers-list');
+        list.innerHTML = '';
 
-    papers.forEach(paper => {
-        const div = document.createElement('div');
-        div.className = 'admin-item';
-        div.innerHTML = `
-            <span>${paper.year} - ${paper.title}</span>
-            <div class="admin-actions">
-                <button class="btn-yellow small" onclick='editPaper(${JSON.stringify(paper)})'>E</button>
-                <button class="btn-red small" onclick="deletePaper('${paper._id}')">X</button>
-            </div>
-        `;
-        list.appendChild(div);
-    });
+        papers.forEach(paper => {
+            const div = document.createElement('div');
+            div.className = 'admin-item';
+            div.innerHTML = `
+                <span>${paper.year} - ${paper.title}</span>
+                <div class="admin-actions">
+                    <button class="btn-yellow small" onclick='editPaper(${JSON.stringify(paper)})'>E</button>
+                    <button class="btn-red small" onclick="deletePaper('${paper._id}')">X</button>
+                </div>
+            `;
+            list.appendChild(div);
+        });
+    } catch (e) {
+        Swal.fire('Error', 'No se pudieron cargar los papers', 'error');
+    }
 }
 
 function editPaper(paper) {
@@ -903,16 +980,24 @@ function editPaper(paper) {
 async function deletePaper(id) {
     const confirm = await Swal.fire({ title: 'Borrar este paper?', icon: 'warning', showCancelButton: true });
     if (confirm.isConfirmed) {
-        await fetch(`/api/paper/${id}`, { method: 'DELETE' });
-        showAdmin();
+        try {
+            await authenticatedFetch(`/api/paper/${id}`, { method: 'DELETE' });
+            showAdmin();
+        } catch (e) {
+            Swal.fire('Error', 'No se pudo eliminar el paper', 'error');
+        }
     }
 }
 
 async function resetWeekly() {
     const confirm = await Swal.fire({ title: 'Reiniciar puntos SEMANALES?', showCancelButton: true });
     if (confirm.isConfirmed) {
-        await fetch('/api/admin/reset-weekly', { method: 'POST' });
-        Swal.fire('Reiniciado', '', 'success');
+        try {
+            await authenticatedFetch('/api/admin/reset-weekly', { method: 'POST' });
+            Swal.fire('Reiniciado', '', 'success');
+        } catch (e) {
+            Swal.fire('Error', 'No se pudo reiniciar', 'error');
+        }
     }
 }
 
@@ -924,8 +1009,12 @@ async function resetTotal() {
         showCancelButton: true
     });
     if (confirm.isConfirmed) {
-        await fetch('/api/admin/reset-total', { method: 'POST' });
-        Swal.fire('Historico a cero', '', 'success');
+        try {
+            await authenticatedFetch('/api/admin/reset-total', { method: 'POST' });
+            Swal.fire('Historico a cero', '', 'success');
+        } catch (e) {
+            Swal.fire('Error', 'No se pudo reiniciar', 'error');
+        }
     }
 }
 

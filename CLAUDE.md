@@ -87,9 +87,87 @@ Quiz Papers is a real-time multiplayer web game designed to make learning about 
 
 ## Security
 
-- Password-protected login (currently: 'bertismael')
-- Player selection from predefined list
-- Admin functions require access to admin screen
+### Authentication & Authorization
+- **JWT-based authentication**: All users must login with username/password to receive a token
+- **Token expiration**: 24 hours (configurable)
+- **Password hashing**: bcryptjs with salt rounds for secure password storage
+- **Protected endpoints**: All API routes require valid JWT token
+- **Socket.io authentication**: Real-time connections validated with JWT
+
+### Input Validation & Sanitization
+- **express-validator**: Validates all user inputs (length, type, format)
+- **NoSQL injection prevention**: Strict type checking and sanitization
+- **XSS prevention**: Input escaping and sanitization
+- **Size limits**: 10kb payload limit on JSON requests
+- **Field constraints**: Max lengths on all string fields (titles, authors, etc.)
+
+### Rate Limiting
+- **General limit**: 100 requests per 15 minutes per IP
+- **Strict limit**: 10 requests per 15 minutes for sensitive operations (login, admin actions)
+- **DDoS protection**: Prevents server saturation
+
+### CORS & Network Security
+- **Whitelist origins**: Only allowed domains can make requests
+- **Configurable via .env**: `ALLOWED_ORIGINS` environment variable
+- **Credentials support**: Secure cookie and auth header handling
+
+### Additional Security Measures
+- **Helmet.js**: Security headers (XSS, clickjacking, etc.)
+- **Crypto-secure IDs**: Game IDs generated with crypto.randomBytes()
+- **Audit logging**: Admin actions logged to console
+- **Password requirements**: Enforced at application level
+- **.env protection**: Sensitive data in environment variables, not code
+
+### Setup Instructions
+
+1. **Generate JWT Secret**:
+```bash
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+```
+
+2. **Configure .env file**:
+```env
+JWT_SECRET=your-generated-secret-here
+MONGO_URI=your-mongodb-connection-string
+ALLOWED_ORIGINS=https://your-domain.com
+DEFAULT_PASSWORD=temporary-password-for-init
+```
+
+3. **Initialize players** (only once):
+Visit `/init-players` to create default users with temporary passwords
+
+4. **Change passwords immediately** after first login
+
+### Deployment on Render
+
+1. Add environment variables in Render dashboard:
+   - `JWT_SECRET`
+   - `MONGO_URI`
+   - `ALLOWED_ORIGINS` (your Render URL)
+   - `DEFAULT_PASSWORD`
+
+2. Ensure `.env` is in `.gitignore` (already configured)
+
+3. Update ALLOWED_ORIGINS to include your Render domain:
+   ```env
+   ALLOWED_ORIGINS=https://your-app.onrender.com
+   ```
+
+### Security Checklist
+
+- [x] JWT authentication implemented
+- [x] Password hashing with bcrypt
+- [x] Input validation on all endpoints
+- [x] NoSQL injection prevention
+- [x] XSS protection
+- [x] Rate limiting
+- [x] CORS whitelist
+- [x] Helmet security headers
+- [x] Socket.io authentication
+- [x] Audit logging for admin actions
+- [ ] HTTPS enforcement (configure in Render)
+- [ ] Regular security audits
+- [ ] Backup strategy for MongoDB
 
 ## User Experience Features
 
