@@ -1,0 +1,134 @@
+# Quiz Papers
+
+A multiplayer quiz game about scientific papers where players compete to test their knowledge of research publications through timeline ordering and attribute matching challenges.
+
+## Overview
+
+Quiz Papers is a real-time multiplayer web game designed to make learning about scientific papers fun and competitive. Players can play solo or compete in duels, earning points for correct answers.
+
+## Features
+
+### Game Modes
+
+#### Timeline Mode
+- Order papers chronologically from oldest to newest
+- Drag-and-drop interface with touch support
+- Handles papers with same publication year intelligently
+- Points awarded for first-try success
+
+#### Matching Mode
+- Match papers with their attributes (authors, year, journal)
+- Click-to-select or drag-and-drop interaction
+- Mobile-optimized touch controls
+- Visual feedback for correct/incorrect placements
+
+### Multiplayer System
+- Real-time duels using Socket.io
+- Lobby system for creating and joining games
+- 2-3 player support
+- Configurable paper count (3-5 papers)
+- Points awarded based on finish position (1st: 3pts, 2nd: 2pts, 3rd: 1pt)
+
+### Scoring System
+- Weekly rankings (resettable)
+- Historical total scores
+- Points for perfect first attempts
+- Penalties for failed first attempts
+- Hall of Fame leaderboards
+
+### Administration
+- Add, edit, and delete papers
+- Manage player scores
+- Reset weekly or total rankings
+- Paper count tracking
+
+## Technical Stack
+
+### Frontend
+- Vanilla JavaScript (ES6+)
+- Socket.io client for real-time multiplayer
+- SweetAlert2 for notifications
+- SortableJS for drag-and-drop
+- Responsive CSS with mobile-first design
+
+### Mobile Support
+- Touch events handling
+- Click-to-select alternative to drag-and-drop
+- Visual clone for touch dragging
+- Optimized touch targets (44px minimum)
+- Responsive grid layouts
+
+### Interaction Methods
+1. **Desktop**: Traditional drag-and-drop
+2. **Mobile**: Touch drag with visual feedback
+3. **Universal**: Click-to-select system (click chip, click destination)
+
+## Game Rules
+
+### Timeline Game
+- Papers must be ordered chronologically
+- Papers with the same year can be in any order relative to each other
+- First correct attempt: +N points (N = number of papers)
+- First incorrect attempt: -(N-1) points penalty
+- Subsequent attempts: no points
+
+### Matching Game
+- Match each paper's year, authors, and journal correctly
+- All attributes must be assigned to submit
+- First perfect match: +N points
+- First incomplete/wrong match: -(N-1) points penalty
+- Subsequent attempts: no points
+
+### Duel Mode
+- Race to complete the challenge correctly
+- Finish order determines points
+- Incorrect submissions don't finish - keep trying
+- Players can see opponents in the waiting room
+
+## Security
+
+- Password-protected login (currently: 'bertismael')
+- Player selection from predefined list
+- Admin functions require access to admin screen
+
+## User Experience Features
+
+- Gradient backgrounds with glassmorphism design
+- Color-coded attribute chips (year=red, authors=blue, journal=green)
+- Animated feedback for selections and interactions
+- Loading states and progress indicators
+- Responsive layouts for all screen sizes
+- Accessibility considerations for touch devices
+
+## Project Structure
+
+```
+Juego Papers/
+├── public/
+│   ├── index.html      # Main HTML structure
+│   ├── script.js       # Client-side game logic
+│   └── style.css       # Styling and responsive design
+├── server.js           # Backend (Node.js + Express + Socket.io)
+└── CLAUDE.md           # This file
+```
+
+## Development Notes
+
+### Key Improvements Implemented
+- Intelligent timeline validation (handles year ties)
+- Dual-mode interaction (drag OR click-to-select)
+- Enhanced mobile touch handling with visual feedback
+- Prevention of accidental selections during scrolling
+- Responsive design with device-specific optimizations
+
+### Future Enhancements
+- User registration system
+- More game modes
+- Paper categories/filters
+- Achievement system
+- Enhanced statistics and analytics
+- Export/import paper database
+
+## Credits
+
+Developed with Claude Code assistance for the Ocio/Creaciones IA collection.

@@ -12,6 +12,9 @@ let isDuel = false;
 let currentDuelId = null;
 let currentGameType = null;
 
+// Variable para el sistema de click-to-select
+let selectedChip = null;
+
 // AL CARGAR LA PAGINA
 document.addEventListener('DOMContentLoaded', () => {
     loadPlayers();
@@ -259,12 +262,16 @@ function renderTimeline(titleText) {
         container.appendChild(div);
     });
 
-    // SortableJS
+    // SortableJS con soporte mejorado para touch
     if (window.sortableInstance) window.sortableInstance.destroy();
     window.sortableInstance = new Sortable(container, {
         animation: 150,
         ghostClass: 'sortable-ghost',
-        touchStartThreshold: 5
+        touchStartThreshold: 3,
+        delay: 100,
+        delayOnTouchOnly: true,
+        forceFallback: true, // Mejor soporte movil
+        fallbackTolerance: 3
     });
 
     showScreen('timeline-screen');
@@ -277,9 +284,9 @@ async function checkTimeline() {
 
     // Orden correcto por ano
     const correctOrder = [...currentPapers].sort((a, b) => a.year - b.year);
-    const correctIds = correctOrder.map(p => p._id);
 
-    const isWin = JSON.stringify(playerOrderIds) === JSON.stringify(correctIds);
+    // NUEVA LOGICA: Verificar si el orden es valido considerando empates de ano
+    const isWin = isValidTimelineOrder(playerOrderIds, correctOrder);
 
     if (isWin) {
         if (isDuel) {
@@ -309,8 +316,27 @@ async function checkTimeline() {
     }
 }
 
+// NUEVA FUNCION: Verificar orden valido permitiendo cualquier orden entre papers del mismo ano
+function isValidTimelineOrder(playerOrderIds, correctOrder) {
+    // Crear un mapa de id -> paper para acceso rapido
+    const paperMap = {};
+    currentPapers.forEach(p => paperMap[p._id] = p);
+
+    // Obtener los anos en el orden del jugador
+    const playerYears = playerOrderIds.map(id => paperMap[id].year);
+
+    // Verificar que los anos esten en orden no decreciente
+    for (let i = 1; i < playerYears.length; i++) {
+        if (playerYears[i] < playerYears[i - 1]) {
+            return false; // Un paper mas reciente esta antes que uno mas antiguo
+        }
+    }
+
+    return true;
+}
+
 // ---------------------------------------------------------
-// 4. JUEGO MATCHING
+// 4. JUEGO MATCHING (con soporte click-to-select y touch)
 // ---------------------------------------------------------
 
 let draggedElement = null;
@@ -322,6 +348,9 @@ function renderMatching(titleText) {
     const poolContainer = document.getElementById('attributes-pool');
     papersContainer.innerHTML = '';
     poolContainer.innerHTML = '';
+    
+    // Resetear seleccion
+    selectedChip = null;
 
     // Crear cards de papers
     currentPapers.forEach(paper => {
@@ -360,9 +389,17 @@ function renderMatching(titleText) {
         chip.id = `chip-${idx}`;
         chip.textContent = attr.value;
 
-        // Drag events
+        // Drag events (para desktop)
         chip.addEventListener('dragstart', handleDragStart);
         chip.addEventListener('dragend', handleDragEnd);
+        
+        // Click event (para click-to-select, funciona en movil y desktop)
+        chip.addEventListener('click', handleChipClick);
+        
+        // Touch events para drag en movil
+        chip.addEventListener('touchstart', handleTouchStart, { passive: false });
+        chip.addEventListener('touchmove', handleTouchMove, { passive: false });
+        chip.addEventListener('touchend', handleTouchEnd, { passive: false });
 
         poolContainer.appendChild(chip);
     });
@@ -372,19 +409,240 @@ function renderMatching(titleText) {
         zone.addEventListener('dragover', handleDragOver);
         zone.addEventListener('dragleave', handleDragLeave);
         zone.addEventListener('drop', handleDrop);
+        
+        // Click en zona (para click-to-select)
+        zone.addEventListener('click', handleZoneClick);
     });
 
     // Pool as drop target (para devolver chips)
     poolContainer.addEventListener('dragover', handleDragOver);
     poolContainer.addEventListener('drop', handleDropToPool);
+    poolContainer.addEventListener('click', handlePoolClick);
 
     showScreen('matching-screen');
 }
+
+// ---------------------------------------------------------
+// SISTEMA CLICK-TO-SELECT (nuevo)
+// ---------------------------------------------------------
+
+function handleChipClick(e) {
+    e.stopPropagation();
+    const chip = e.target.closest('.attribute-chip');
+    if (!chip) return;
+    
+    // Si ya esta seleccionado, deseleccionar
+    if (selectedChip === chip) {
+        deselectChip();
+        return;
+    }
+    
+    // Deseleccionar el anterior si habia uno
+    deselectChip();
+    
+    // Seleccionar este chip
+    selectedChip = chip;
+    chip.classList.add('selected');
+}
+
+function handleZoneClick(e) {
+    e.stopPropagation();
+    const zone = e.target.closest('.drop-zone');
+    if (!zone) return;
+    
+    // Si hay un chip seleccionado, intentar colocarlo
+    if (selectedChip) {
+        // Verificar que el tipo coincide
+        if (zone.dataset.type !== selectedChip.dataset.type) {
+            Swal.fire({
+                title: 'Tipo incorrecto',
+                text: `Esta zona es para ${zone.dataset.type}`,
+                icon: 'warning',
+                timer: 1500,
+                showConfirmButton: false
+            });
+            return;
+        }
+        
+        // Si ya tiene un chip, devolverlo al pool
+        const existingChip = zone.querySelector('.attribute-chip');
+        if (existingChip) {
+            document.getElementById('attributes-pool').appendChild(existingChip);
+        }
+        
+        // Mover chip a la zona
+        zone.appendChild(selectedChip);
+        zone.classList.add('filled');
+        updateDropZoneText(zone);
+        
+        // Deseleccionar
+        deselectChip();
+    } else {
+        // Si no hay chip seleccionado pero la zona tiene uno, seleccionarlo
+        const chipInZone = zone.querySelector('.attribute-chip');
+        if (chipInZone) {
+            selectedChip = chipInZone;
+            chipInZone.classList.add('selected');
+        }
+    }
+}
+
+function handlePoolClick(e) {
+    // Si hacemos click en el pool con un chip seleccionado, devolverlo
+    if (selectedChip && e.target.id === 'attributes-pool') {
+        // Restaurar zona original si venia de una
+        const originalZone = selectedChip.parentElement;
+        if (originalZone.classList.contains('drop-zone')) {
+            originalZone.classList.remove('filled');
+            updateDropZoneText(originalZone);
+        }
+        document.getElementById('attributes-pool').appendChild(selectedChip);
+        deselectChip();
+    }
+}
+
+function deselectChip() {
+    if (selectedChip) {
+        selectedChip.classList.remove('selected');
+        selectedChip = null;
+    }
+}
+
+// ---------------------------------------------------------
+// SISTEMA TOUCH DRAG (para movil)
+// ---------------------------------------------------------
+
+let touchDragElement = null;
+let touchClone = null;
+let touchStartX = 0;
+let touchStartY = 0;
+let isTouchDragging = false;
+
+function handleTouchStart(e) {
+    const chip = e.target.closest('.attribute-chip');
+    if (!chip) return;
+    
+    touchDragElement = chip;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    isTouchDragging = false;
+}
+
+function handleTouchMove(e) {
+    if (!touchDragElement) return;
+    
+    const touch = e.touches[0];
+    const deltaX = Math.abs(touch.clientX - touchStartX);
+    const deltaY = Math.abs(touch.clientY - touchStartY);
+    
+    // Solo iniciar drag si se movio suficiente
+    if (!isTouchDragging && (deltaX > 10 || deltaY > 10)) {
+        isTouchDragging = true;
+        
+        // Crear clon visual para el drag
+        touchClone = touchDragElement.cloneNode(true);
+        touchClone.classList.add('touch-dragging');
+        touchClone.style.position = 'fixed';
+        touchClone.style.zIndex = '9999';
+        touchClone.style.pointerEvents = 'none';
+        touchClone.style.opacity = '0.8';
+        touchClone.style.transform = 'scale(1.1)';
+        document.body.appendChild(touchClone);
+        
+        touchDragElement.classList.add('dragging');
+    }
+    
+    if (isTouchDragging && touchClone) {
+        e.preventDefault();
+        touchClone.style.left = (touch.clientX - 50) + 'px';
+        touchClone.style.top = (touch.clientY - 20) + 'px';
+        
+        // Highlight drop zones
+        highlightDropZone(touch.clientX, touch.clientY);
+    }
+}
+
+function handleTouchEnd(e) {
+    if (!touchDragElement) return;
+    
+    if (isTouchDragging) {
+        // Encontrar donde soltar
+        const touch = e.changedTouches[0];
+        const dropTarget = document.elementFromPoint(touch.clientX, touch.clientY);
+        
+        // Limpiar highlights
+        document.querySelectorAll('.drop-zone').forEach(z => z.classList.remove('over'));
+        
+        if (dropTarget) {
+            const zone = dropTarget.closest('.drop-zone');
+            const pool = dropTarget.closest('#attributes-pool');
+            
+            if (zone) {
+                // Intentar soltar en zona
+                if (zone.dataset.type === touchDragElement.dataset.type) {
+                    const existingChip = zone.querySelector('.attribute-chip');
+                    if (existingChip) {
+                        document.getElementById('attributes-pool').appendChild(existingChip);
+                    }
+                    zone.appendChild(touchDragElement);
+                    zone.classList.add('filled');
+                    updateDropZoneText(zone);
+                } else {
+                    Swal.fire({
+                        title: 'Tipo incorrecto',
+                        text: `Esta zona es para ${zone.dataset.type}`,
+                        icon: 'warning',
+                        timer: 1500,
+                        showConfirmButton: false
+                    });
+                }
+            } else if (pool || dropTarget.id === 'attributes-pool') {
+                // Devolver al pool
+                const originalZone = touchDragElement.parentElement;
+                if (originalZone.classList.contains('drop-zone')) {
+                    originalZone.classList.remove('filled');
+                    updateDropZoneText(originalZone);
+                }
+                document.getElementById('attributes-pool').appendChild(touchDragElement);
+            }
+        }
+        
+        // Limpiar
+        if (touchClone) {
+            touchClone.remove();
+            touchClone = null;
+        }
+        touchDragElement.classList.remove('dragging');
+    }
+    
+    touchDragElement = null;
+    isTouchDragging = false;
+}
+
+function highlightDropZone(x, y) {
+    document.querySelectorAll('.drop-zone').forEach(zone => {
+        const rect = zone.getBoundingClientRect();
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+            if (touchDragElement && zone.dataset.type === touchDragElement.dataset.type) {
+                zone.classList.add('over');
+            }
+        } else {
+            zone.classList.remove('over');
+        }
+    });
+}
+
+// ---------------------------------------------------------
+// DRAG & DROP CLASICO (desktop)
+// ---------------------------------------------------------
 
 function handleDragStart(e) {
     draggedElement = e.target;
     e.target.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
+    
+    // Deseleccionar si habia algo seleccionado
+    deselectChip();
 }
 
 function handleDragEnd(e) {
@@ -678,4 +936,7 @@ async function resetTotal() {
 function showScreen(screenId) {
     document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
     document.getElementById(screenId).classList.remove('hidden');
+    
+    // Limpiar seleccion al cambiar de pantalla
+    deselectChip();
 }
