@@ -476,6 +476,17 @@ button:active {
     margin-top: 15px;
 }
 
+/* Warning message */
+.warning-msg {
+    background: rgba(241, 196, 15, 0.2);
+    border: 2px solid #f1c40f;
+    color: #f1c40f;
+    padding: 12px;
+    border-radius: 8px;
+    margin: 15px 0;
+    font-weight: 600;
+}
+
 /* Responsive - MEJORADO PARA MOVIL */
 @media (max-width: 600px) {
     body {

@@ -14,12 +14,45 @@ let selectedChip = null;
 
 // AL CARGAR LA PAGINA
 document.addEventListener('DOMContentLoaded', () => {
-    loadPlayers();
+    // Intentar recuperar sesión guardada
+    const savedToken = localStorage.getItem('authToken');
+    const savedPlayer = localStorage.getItem('currentPlayer');
+
+    if (savedToken && savedPlayer) {
+        authToken = savedToken;
+        currentPlayer = savedPlayer;
+
+        // Verificar si el token sigue siendo válido
+        verifyTokenAndLogin();
+    } else {
+        loadPlayers();
+    }
 });
 
 // ---------------------------------------------------------
 // 1. GESTION DE USUARIOS (LOGIN)
 // ---------------------------------------------------------
+
+// Verificar token guardado y auto-login
+async function verifyTokenAndLogin() {
+    try {
+        // Intentar obtener los jugadores (endpoint que no requiere auth)
+        const res = await fetch('/api/players');
+        if (!res.ok) throw new Error('Session expired');
+
+        // Si funciona, conectar socket y mostrar menú
+        initSocket();
+        document.getElementById('welcome-msg').textContent = `Hola, ${currentPlayer}`;
+        showScreen('menu-screen');
+    } catch (e) {
+        // Token expirado o inválido, limpiar y volver a login
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('currentPlayer');
+        authToken = null;
+        currentPlayer = null;
+        loadPlayers();
+    }
+}
 
 async function loadPlayers() {
     try {
@@ -69,16 +102,26 @@ async function login() {
             return;
         }
 
-        // Guardar token
+        // Guardar token y usuario
         authToken = data.token;
         currentPlayer = data.player.name;
+
+        // Guardar en localStorage para persistencia
+        localStorage.setItem('authToken', authToken);
+        localStorage.setItem('currentPlayer', currentPlayer);
 
         // Conectar socket con autenticación
         initSocket();
 
         document.getElementById('welcome-msg').textContent = `Hola, ${currentPlayer}`;
         Swal.close();
-        showScreen('menu-screen');
+
+        // Verificar si debe cambiar contraseña
+        if (data.player.mustChangePassword) {
+            showScreen('change-password-screen');
+        } else {
+            showScreen('menu-screen');
+        }
 
     } catch (e) {
         console.error(e);
@@ -1019,13 +1062,66 @@ async function resetTotal() {
 }
 
 // ---------------------------------------------------------
-// 8. NAVEGACION
+// 8. CAMBIAR CONTRASEÑA
+// ---------------------------------------------------------
+
+function showChangePasswordScreen() {
+    // Limpiar campos
+    document.getElementById('current-password').value = '';
+    document.getElementById('new-password').value = '';
+    document.getElementById('confirm-password').value = '';
+    showScreen('change-password-screen');
+}
+
+async function changePassword() {
+    const currentPassword = document.getElementById('current-password').value;
+    const newPassword = document.getElementById('new-password').value;
+    const confirmPassword = document.getElementById('confirm-password').value;
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+        return Swal.fire('Error', 'Completa todos los campos', 'warning');
+    }
+
+    if (newPassword.length < 6) {
+        return Swal.fire('Error', 'La contraseña debe tener al menos 6 caracteres', 'warning');
+    }
+
+    if (newPassword !== confirmPassword) {
+        return Swal.fire('Error', 'Las contraseñas no coinciden', 'warning');
+    }
+
+    Swal.fire({ title: 'Cambiando contraseña...', didOpen: () => Swal.showLoading() });
+
+    try {
+        const res = await authenticatedFetch('/api/change-password', {
+            method: 'POST',
+            body: JSON.stringify({ currentPassword, newPassword })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+            Swal.fire('Error', data.error || 'No se pudo cambiar la contraseña', 'error');
+            return;
+        }
+
+        await Swal.fire('¡Listo!', 'Contraseña actualizada correctamente', 'success');
+        showScreen('menu-screen');
+
+    } catch (e) {
+        console.error(e);
+        Swal.fire('Error', 'Error al cambiar la contraseña', 'error');
+    }
+}
+
+// ---------------------------------------------------------
+// 9. NAVEGACION
 // ---------------------------------------------------------
 
 function showScreen(screenId) {
     document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
     document.getElementById(screenId).classList.remove('hidden');
-    
+
     // Limpiar seleccion al cambiar de pantalla
     deselectChip();
 }

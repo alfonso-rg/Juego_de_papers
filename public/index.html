@@ -19,6 +19,21 @@
             <select id="player-select"><option value="">Cargando...</option></select>
             <input type="password" id="password-input" placeholder="Contrasena">
             <button onclick="login()">Entrar</button>
+            <p style="margin-top: 20px; font-size: 0.85em; color: #95a5a6;">
+                <strong>Primera vez?</strong> Contrasena por defecto: <code style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px;">cambiar123</code>
+            </p>
+        </div>
+
+        <!-- CAMBIAR CONTRASEÑA -->
+        <div id="change-password-screen" class="screen hidden">
+            <h3>Cambiar Contrasena</h3>
+            <p class="warning-msg">Debes cambiar tu contrasena antes de continuar</p>
+            <input type="password" id="current-password" placeholder="Contrasena actual">
+            <input type="password" id="new-password" placeholder="Nueva contrasena (min. 6 caracteres)">
+            <input type="password" id="confirm-password" placeholder="Confirmar nueva contrasena">
+            <div class="actions">
+                <button class="btn-green" onclick="changePassword()">Cambiar Contrasena</button>
+            </div>
         </div>
 
         <!-- MENU PRINCIPAL -->
@@ -31,6 +46,7 @@
                 <button class="btn-main" onclick="enterDuelLobby()">Sala de Duelos</button>
                 <button class="btn-main" onclick="showHallOfFame()">Rankings</button>
                 <button class="btn-grey" onclick="showAdmin()">Administracion</button>
+                <button class="btn-grey" onclick="showChangePasswordScreen()">Cambiar Contrasena</button>
             </div>
         </div>
 

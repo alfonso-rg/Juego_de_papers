@@ -75,6 +75,7 @@ mongoose.connect(process.env.MONGO_URI)
 const PlayerSchema = new mongoose.Schema({
     name: { type: String, required: true, unique: true },
     password: { type: String, required: true }, // Contraseña hasheada
+    mustChangePassword: { type: Boolean, default: true }, // Fuerza cambio en primer login
     stats: {
         totalPoints: { type: Number, default: 0 },
         weeklyPoints: { type: Number, default: 0 },
@@ -365,11 +366,57 @@ app.post('/api/login',
                 token,
                 player: {
                     name: player.name,
-                    stats: player.stats
+                    stats: player.stats,
+                    mustChangePassword: player.mustChangePassword
                 }
             });
         } catch (e) {
             res.status(500).json({ error: 'Error en el servidor' });
+        }
+    }
+);
+
+// Cambiar contraseña
+app.post('/api/change-password',
+    authenticateToken,
+    strictLimiter,
+    body('currentPassword').isLength({ min: 1 }),
+    body('newPassword').isLength({ min: 6 }).withMessage('La contraseña debe tener al menos 6 caracteres'),
+    validate,
+    async (req, res) => {
+        try {
+            const { currentPassword, newPassword } = req.body;
+            const playerName = req.user.name;
+
+            const player = await Player.findOne({ name: playerName });
+            if (!player) {
+                return res.status(404).json({ error: 'Usuario no encontrado' });
+            }
+
+            // Verificar contraseña actual
+            const validPassword = await bcrypt.compare(currentPassword, player.password);
+            if (!validPassword) {
+                return res.status(401).json({ error: 'Contraseña actual incorrecta' });
+            }
+
+            // Hashear nueva contraseña
+            const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+            // Actualizar contraseña y marcar que ya no necesita cambio
+            await Player.findOneAndUpdate(
+                { name: playerName },
+                {
+                    password: hashedPassword,
+                    mustChangePassword: false
+                }
+            );
+
+            console.log(`Password changed by ${playerName}`);
+            res.json({ success: true, message: 'Contraseña actualizada correctamente' });
+
+        } catch (e) {
+            console.error('Error changing password:', e);
+            res.status(500).json({ error: 'Error al cambiar la contraseña' });
         }
     }
 );
