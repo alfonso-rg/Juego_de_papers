@@ -14,6 +14,9 @@ const helmet = require('helmet');
 const app = express();
 const server = http.createServer(app);
 
+// Trust proxy - Necesario para Render y otros servicios de hosting
+app.set('trust proxy', 1);
+
 // JWT Secret (debe estar en .env en producción)
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-in-production';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3001'];
